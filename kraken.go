@@ -5,9 +5,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pequin/xlog"
 )
 
 // Copyright 2024 Vasiliy Vdovin
@@ -83,11 +86,11 @@ type Trade struct {
 	Time     time.Time
 }
 
-func (s *SpotData) Trades(pair string, since time.Time) ([]Trade, uint64, error) {
+func (s *SpotData) trades(pair string, since time.Time) ([]Trade, time.Time, error) {
 
 	tds := make([]Trade, 0)
 
-	last := uint64(0)
+	last := time.Time{}
 
 	var data struct {
 		Result any `json:"result"`
@@ -95,33 +98,27 @@ func (s *SpotData) Trades(pair string, since time.Time) ([]Trade, uint64, error)
 
 	// Create request.
 	rqt, err := http.NewRequest("GET", "https://api.kraken.com/0/public/Trades", nil)
-	if err != nil {
-		return tds, last, err
-	}
+	xlog.Fatalln(err)
 
 	// Adding headers.
 	rqt.Header.Add("Content-Type", "application/json")
 
 	// Adding queries.
 	qey := rqt.URL.Query()
-	qey.Add("pair", pair)
-	qey.Add("since", strconv.FormatInt(since.UTC().UnixNano(), 10))
-	qey.Add("count", "1000")
+	qey.Add("pair", strings.ToUpper(pair))
+	qey.Add("since", strconv.FormatInt(int64(since.UTC().UnixNano()), 10))
+	qey.Add("count", "10")
 	rqt.URL.RawQuery = qey.Encode()
 
 	// Execute request.
 	rpe, err := http.DefaultClient.Do(rqt)
-	if err != nil {
-		return tds, last, err
-	}
+	xlog.Fatalln(err)
 
 	if err := responseStatusCode(rpe); err != nil {
 		return tds, last, err
 	}
 
-	if err := responseToJSON(rpe, &data); err != nil {
-		return tds, last, err
-	}
+	xlog.Fatalln(responseToJSON(rpe, &data))
 
 	for k, v := range data.Result.(map[string]any) {
 
@@ -136,33 +133,23 @@ func (s *SpotData) Trades(pair string, since time.Time) ([]Trade, uint64, error)
 
 				// Parse price.
 				price, err := strconv.ParseFloat(v[0].(string), 64)
-				if err != nil {
-					return tds, last, err
-				}
+				xlog.Fatalln(err)
 				t.Price = price
 
 				// Parse volume.
 				volume, err := strconv.ParseFloat(v[1].(string), 64)
-				if err != nil {
-					return tds, last, err
-				}
+				xlog.Fatalln(err)
 				t.Volume = volume
 
 				// Parse time.
 				tsp, err := json.Marshal(v[2])
-				if err != nil {
-					return tds, last, err
-				}
+				xlog.Fatalln(err)
 
 				sec, err := strconv.ParseInt(string(tsp[:10]), 10, 64)
-				if err != nil {
-					return tds, last, err
-				}
+				xlog.Fatalln(err)
 
 				nsec, err := strconv.ParseInt(string(tsp[11:]), 10, 64)
-				if err != nil {
-					return tds, last, err
-				}
+				xlog.Fatalln(err)
 
 				t.Time = time.Unix(sec, nsec).UTC()
 
@@ -180,16 +167,66 @@ func (s *SpotData) Trades(pair string, since time.Time) ([]Trade, uint64, error)
 
 		} else if k == "last" {
 
-			lst, err := strconv.ParseUint(v.(string), 10, 64)
-			if err != nil {
-				return tds, last, err
-			}
+			lst, err := strconv.ParseInt(v.(string), 10, 64)
+			xlog.Fatalln(err)
 
-			last = lst
-
+			last = time.Unix(0, lst).UTC()
 		}
 
 	}
 
 	return tds, last, nil
+}
+
+func (s *SpotData) Trades(pair string, from time.Time, duration time.Duration, cluster func(trades []Trade, last time.Time)) error {
+
+	// Cluster.
+	csr := make([]Trade, 0)
+
+	// Next timestamp.
+	pts := time.Time{}
+
+	isContinue := true
+
+	for getID := 0; isContinue; getID++ {
+
+		if getID != 0 {
+			time.Sleep(time.Second)
+		}
+		tds, lst, err := s.trades(pair, from)
+
+		if err != nil {
+			return err
+		}
+
+		sort.Slice(tds, func(i, j int) bool {
+			return tds[i].Id < tds[j].Id
+		})
+
+		for i := 0; i < len(tds) && isContinue; i++ {
+
+			// Prev timestamp.
+			if getID == 0 && i == 0 {
+				pts = tds[i].Time.Truncate(duration)
+			}
+
+			// Separation.
+			if pts != tds[i].Time.Truncate(duration) {
+
+				cluster(csr, lst)
+
+				csr = csr[:0]
+			}
+
+			pts = tds[i].Time.Truncate(duration)
+
+			csr = append(csr, tds[i])
+
+			isContinue = time.Now().UTC().Truncate(duration) != tds[i].Time.Truncate(duration)
+		}
+
+		from = lst.Add(time.Nanosecond)
+	}
+
+	return nil
 }
