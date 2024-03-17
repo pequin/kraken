@@ -35,16 +35,6 @@ var ErrorTooManyRequests = errors.New("the client reached the rate limit for the
 var ErrorServiceUnavailable = errors.New("all clients together reached the configured global rate limit for the endpoint")
 var ErrorInternalServer = errors.New("default error code, and in general, when backends return any status above 400")
 
-type SpotData struct {
-}
-
-func NewSpotData() *SpotData {
-
-	api := SpotData{}
-
-	return &api
-}
-
 func responseStatusCode(response *http.Response) error {
 
 	if response.StatusCode == 404 {
@@ -86,7 +76,7 @@ type Trade struct {
 	Time     time.Time
 }
 
-func (s *SpotData) trades(pair string, since time.Time) ([]Trade, time.Time, error) {
+func trades(pair string, since time.Time) ([]Trade, time.Time, error) {
 
 	tds := make([]Trade, 0)
 
@@ -178,12 +168,12 @@ func (s *SpotData) trades(pair string, since time.Time) ([]Trade, time.Time, err
 	return tds, last, nil
 }
 
-func (s *SpotData) Trades(pair string, from time.Time, duration time.Duration, cluster func(trades []Trade, last time.Time)) error {
+func Trades(pair string, from time.Time, duration time.Duration, cluster func(trades []Trade, last time.Time)) error {
 
 	// Cluster.
 	csr := make([]Trade, 0)
 
-	// Next timestamp.
+	// Prev timestamp.
 	pts := time.Time{}
 
 	isContinue := true
@@ -193,7 +183,7 @@ func (s *SpotData) Trades(pair string, from time.Time, duration time.Duration, c
 		if getID != 0 {
 			time.Sleep(time.Second)
 		}
-		tds, lst, err := s.trades(pair, from)
+		tds, lst, err := trades(pair, from)
 
 		if err != nil {
 			return err
