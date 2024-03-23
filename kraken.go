@@ -3,7 +3,6 @@ package kraken
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -55,7 +54,7 @@ func responseStatusCode(response *http.Response) error {
 	return nil
 }
 
-func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Time, price, volume float64, buy, market bool)) time.Time {
+func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Time, price, volume float64, buy, limit bool)) time.Time {
 
 	var data struct {
 		Result any `json:"result"`
@@ -120,7 +119,7 @@ func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Ti
 		buy := t[3].(string) == "b"
 
 		// Parse market/limit.
-		mkt := t[4].(string) == "m"
+		lmt := t[4].(string) == "l"
 
 		sec, err := strconv.ParseInt(string(tsp[:10]), 10, 64)
 		xlog.Fatalln(err)
@@ -131,7 +130,7 @@ func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Ti
 		// Parse trade id.
 		id := uint64(t[6].(float64))
 
-		trade(id, time.Unix(sec, nsec).UTC(), pce, vle, buy, mkt)
+		trade(id, time.Unix(sec, nsec).UTC(), pce, vle, buy, lmt)
 	}
 
 	from = time.Unix(0, lst).UTC()
@@ -144,53 +143,4 @@ func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Ti
 	}
 
 	return from
-}
-
-func Spread(pair string, from time.Time) {
-
-	var data struct {
-		Result any `json:"result"`
-	}
-
-	// Create request.
-	rqt, err := http.NewRequest("GET", "https://api.kraken.com/0/public/Spread", nil)
-	xlog.Fatalln(err)
-
-	// Adding headers.
-	rqt.Header.Add("User-Agent", "github.com/pequin/kraken")
-	rqt.Header.Add("Content-Type", "application/json")
-
-	// Adding queries.
-	qey := rqt.URL.Query()
-	qey.Add("pair", strings.ToUpper(pair))
-	qey.Add("since", strconv.FormatInt(int64(from.UTC().UnixNano()), 10))
-	qey.Add("count", "1000")
-	rqt.URL.RawQuery = qey.Encode()
-
-	// Execute request.
-	rpe, err := http.DefaultClient.Do(rqt)
-	xlog.Fatalln(err)
-
-	// Checking response of a server.
-	xlog.Fatalln(responseStatusCode(rpe))
-
-	// Body from response.
-	bdy, err := io.ReadAll(rpe.Body)
-	xlog.Fatalln(err)
-
-	// Parse json.
-	xlog.Fatalln(json.Unmarshal(bdy, &data))
-
-	// Result.
-	rst := data.Result.(map[string]any)
-
-	fmt.Println("dfbfd", rst)
-
-	// // Timestamp for last trade.
-	// lst, err := strconv.ParseInt(rst["last"].(string), 10, 64)
-	// xlog.Fatalln(err)
-
-	// // Trades.
-	// tds := rst[strings.ToUpper(pair)].([]any)
-
 }
