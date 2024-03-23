@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -55,32 +54,7 @@ func responseStatusCode(response *http.Response) error {
 	return nil
 }
 
-func responseToJSON(response *http.Response, data any) error {
-
-	// Body from response.
-	bdy, err := io.ReadAll(response.Body)
-	if err != nil {
-		return err
-	}
-
-	// Parse json.
-	return json.Unmarshal(bdy, data)
-}
-
-type Trade struct {
-	Id       uint64
-	Price    float64
-	Volume   float64
-	IsBuy    bool
-	IsMarket bool
-	Time     time.Time
-}
-
-func trades(pair string, since time.Time) ([]Trade, time.Time, error) {
-
-	tds := make([]Trade, 0)
-
-	last := time.Time{}
+func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Time, price, volume float64, buy, limit bool)) time.Time {
 
 	var data struct {
 		Result any `json:"result"`
@@ -91,132 +65,82 @@ func trades(pair string, since time.Time) ([]Trade, time.Time, error) {
 	xlog.Fatalln(err)
 
 	// Adding headers.
+	rqt.Header.Add("User-Agent", "github.com/pequin/kraken")
 	rqt.Header.Add("Content-Type", "application/json")
 
 	// Adding queries.
 	qey := rqt.URL.Query()
 	qey.Add("pair", strings.ToUpper(pair))
-	qey.Add("since", strconv.FormatInt(int64(since.UTC().UnixNano()), 10))
-	qey.Add("count", "10")
+	qey.Add("since", strconv.FormatInt(int64(from.UTC().UnixNano()), 10))
+	qey.Add("count", "1000")
 	rqt.URL.RawQuery = qey.Encode()
 
 	// Execute request.
 	rpe, err := http.DefaultClient.Do(rqt)
 	xlog.Fatalln(err)
 
-	if err := responseStatusCode(rpe); err != nil {
-		return tds, last, err
+	// Checking response of a server.
+	xlog.Fatalln(responseStatusCode(rpe))
+
+	// Body from response.
+	bdy, err := io.ReadAll(rpe.Body)
+	xlog.Fatalln(err)
+
+	// Parse json.
+	xlog.Fatalln(json.Unmarshal(bdy, &data))
+
+	// Result.
+	rst := data.Result.(map[string]any)
+
+	// Timestamp for last trade.
+	lst, err := strconv.ParseInt(rst["last"].(string), 10, 64)
+	xlog.Fatalln(err)
+
+	// Trades.
+	tds := rst[strings.ToUpper(pair)].([]any)
+
+	for i := 0; i < len(tds); i++ {
+
+		t := tds[i].([]any)
+
+		// Parse price.
+		pce, err := strconv.ParseFloat(t[0].(string), 64)
+		xlog.Fatalln(err)
+
+		// Parse volume.
+		vle, err := strconv.ParseFloat(t[1].(string), 64)
+		xlog.Fatalln(err)
+
+		// Parse time.
+		tsp, err := json.Marshal(t[2])
+		xlog.Fatalln(err)
+
+		// Parse buy/sell.
+		buy := t[3].(string) == "b"
+
+		// Parse market/limit.
+		lmt := t[4].(string) == "l"
+
+		sec, err := strconv.ParseInt(string(tsp[:10]), 10, 64)
+		xlog.Fatalln(err)
+
+		nsec, err := strconv.ParseInt(string(tsp[11:]), 10, 64)
+		xlog.Fatalln(err)
+
+		// Parse trade id.
+		id := uint64(t[6].(float64))
+
+		trade(id, time.Unix(sec, nsec).UTC(), pce, vle, buy, lmt)
 	}
 
-	xlog.Fatalln(responseToJSON(rpe, &data))
+	from = time.Unix(0, lst).UTC()
 
-	for k, v := range data.Result.(map[string]any) {
+	if len(tds) > 0 {
 
-		// Trades.
-		if k == strings.ToUpper(pair) {
+		time.Sleep(time.Second)
 
-			for _, v := range v.([]any) {
-
-				t := Trade{}
-
-				v := v.([]any)
-
-				// Parse price.
-				price, err := strconv.ParseFloat(v[0].(string), 64)
-				xlog.Fatalln(err)
-				t.Price = price
-
-				// Parse volume.
-				volume, err := strconv.ParseFloat(v[1].(string), 64)
-				xlog.Fatalln(err)
-				t.Volume = volume
-
-				// Parse time.
-				tsp, err := json.Marshal(v[2])
-				xlog.Fatalln(err)
-
-				sec, err := strconv.ParseInt(string(tsp[:10]), 10, 64)
-				xlog.Fatalln(err)
-
-				nsec, err := strconv.ParseInt(string(tsp[11:]), 10, 64)
-				xlog.Fatalln(err)
-
-				t.Time = time.Unix(sec, nsec).UTC()
-
-				// Parse buy/sell.
-				t.IsBuy = v[3].(string) == "b"
-
-				// Parse market/limit.
-				t.IsMarket = v[4].(string) == "m"
-
-				// Parse trade id.
-				t.Id = uint64(v[6].(float64))
-
-				tds = append(tds, t)
-			}
-
-		} else if k == "last" {
-
-			lst, err := strconv.ParseInt(v.(string), 10, 64)
-			xlog.Fatalln(err)
-
-			last = time.Unix(0, lst).UTC()
-		}
-
+		Trades(pair, from.Add(time.Nanosecond), trade)
 	}
 
-	return tds, last, nil
-}
-
-func Trades(pair string, from time.Time, duration time.Duration, cluster func(trades []Trade, last time.Time)) error {
-
-	// Cluster.
-	csr := make([]Trade, 0)
-
-	// Prev timestamp.
-	pts := time.Time{}
-
-	isContinue := true
-
-	for getID := 0; isContinue; getID++ {
-
-		if getID != 0 {
-			time.Sleep(time.Second)
-		}
-		tds, lst, err := trades(pair, from)
-
-		if err != nil {
-			return err
-		}
-
-		sort.Slice(tds, func(i, j int) bool {
-			return tds[i].Id < tds[j].Id
-		})
-
-		for i := 0; i < len(tds) && isContinue; i++ {
-
-			// Prev timestamp.
-			if getID == 0 && i == 0 {
-				pts = tds[i].Time.Truncate(duration)
-			}
-
-			// Separation.
-			if pts != tds[i].Time.Truncate(duration) {
-
-				cluster(csr, lst)
-
-				csr = csr[:0]
-			}
-
-			pts = tds[i].Time.Truncate(duration)
-
-			csr = append(csr, tds[i])
-
-			isContinue = time.Now().UTC().Truncate(duration) != tds[i].Time.Truncate(duration)
-		}
-
-		from = lst.Add(time.Nanosecond)
-	}
-
-	return nil
+	return from
 }
