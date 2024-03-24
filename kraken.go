@@ -54,7 +54,7 @@ func responseStatusCode(response *http.Response) error {
 	return nil
 }
 
-func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Time, price, volume float64, buy, limit bool)) time.Time {
+func Trades(pair string, from time.Time, trade func(id uint64, tme, nte time.Time, price, volume float64, buy bool)) time.Time {
 
 	var data struct {
 		Result any `json:"result"`
@@ -72,7 +72,7 @@ func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Ti
 	qey := rqt.URL.Query()
 	qey.Add("pair", strings.ToUpper(pair))
 	qey.Add("since", strconv.FormatInt(int64(from.UTC().UnixNano()), 10))
-	qey.Add("count", "1000")
+	qey.Add("count", "10")
 	rqt.URL.RawQuery = qey.Encode()
 
 	// Execute request.
@@ -99,7 +99,7 @@ func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Ti
 	// Trades.
 	tds := rst[strings.ToUpper(pair)].([]any)
 
-	for i := 0; i < len(tds); i++ {
+	for i := 0; i < len(tds)-1; i++ {
 
 		t := tds[i].([]any)
 
@@ -115,22 +115,29 @@ func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Ti
 		tsp, err := json.Marshal(t[2])
 		xlog.Fatalln(err)
 
+		csc, err := strconv.ParseInt(string(tsp[:10]), 10, 64)
+		xlog.Fatalln(err)
+
+		cnc, err := strconv.ParseInt(string(tsp[11:]), 10, 64)
+		xlog.Fatalln(err)
+
+		// Parse next time.
+		nts, err := json.Marshal(tds[i+1].([]any)[2])
+		xlog.Fatalln(err)
+
+		nsc, err := strconv.ParseInt(string(nts[:10]), 10, 64)
+		xlog.Fatalln(err)
+
+		nns, err := strconv.ParseInt(string(nts[11:]), 10, 64)
+		xlog.Fatalln(err)
+
 		// Parse buy/sell.
 		buy := t[3].(string) == "b"
-
-		// Parse market/limit.
-		lmt := t[4].(string) == "l"
-
-		sec, err := strconv.ParseInt(string(tsp[:10]), 10, 64)
-		xlog.Fatalln(err)
-
-		nsec, err := strconv.ParseInt(string(tsp[11:]), 10, 64)
-		xlog.Fatalln(err)
 
 		// Parse trade id.
 		id := uint64(t[6].(float64))
 
-		trade(id, time.Unix(sec, nsec).UTC(), pce, vle, buy, lmt)
+		trade(id, time.Unix(csc, cnc).UTC(), time.Unix(nsc, nns).UTC(), pce, vle, buy)
 	}
 
 	from = time.Unix(0, lst).UTC()
@@ -139,7 +146,7 @@ func Trades(pair string, from time.Time, trade func(id uint64, timestamp time.Ti
 
 		time.Sleep(time.Second)
 
-		Trades(pair, from.Add(time.Nanosecond), trade)
+		Trades(pair, from, trade)
 	}
 
 	return from
