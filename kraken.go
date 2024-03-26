@@ -154,7 +154,7 @@ func Trades(pair string, from time.Time, interval time.Duration, cluster func(tr
 
 	trades(pair, from, func(id uint64, timestamp time.Time, price, volume float64, buy bool) {
 
-		if ptp.Before(timestamp.Truncate(interval)) {
+		if ptp.Before(timestamp.Truncate(interval)) && len(tds) > 0 {
 
 			cluster(tds...)
 
