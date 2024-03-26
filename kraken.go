@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pequin/ctd"
 	"github.com/pequin/xlog"
 )
 
@@ -25,14 +26,6 @@ import (
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-type Trade struct {
-	Id       uint64
-	Price    float64
-	Quantity float64
-	Time     time.Time
-	Buy      bool
-}
 
 var ErrorNotFound = errors.New("the requested endpoint is not configured on KrakenD")
 var ErrorBadRequest = errors.New("client made a malformed request, i.e. json-schema validation failed")
@@ -151,13 +144,13 @@ func trades(pair string, from time.Time, trade func(id uint64, timestamp time.Ti
 	return from
 }
 
-func Trades(pair string, from time.Time, interval time.Duration, cluster func(trades ...Trade)) {
+func Trades(pair string, from time.Time, interval time.Duration, cluster func(trades ...ctd.Trade)) {
 
 	// Prev timestamp.
 	ptp := time.Time{}
 
 	// Trades
-	tds := make([]Trade, 0)
+	tds := make([]ctd.Trade, 0)
 
 	trades(pair, from, func(id uint64, timestamp time.Time, price, volume float64, buy bool) {
 
@@ -168,7 +161,7 @@ func Trades(pair string, from time.Time, interval time.Duration, cluster func(tr
 			tds = tds[:0]
 		}
 
-		tds = append(tds, Trade{
+		tds = append(tds, ctd.Trade{
 			Id:       id,
 			Price:    price,
 			Quantity: volume,
