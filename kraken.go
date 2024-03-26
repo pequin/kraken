@@ -26,6 +26,14 @@ import (
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+type Trade struct {
+	Id       uint64
+	Price    float64
+	Quantity float64
+	Time     time.Time
+	Buy      bool
+}
+
 var ErrorNotFound = errors.New("the requested endpoint is not configured on KrakenD")
 var ErrorBadRequest = errors.New("client made a malformed request, i.e. json-schema validation failed")
 var ErrorUnauthorized = errors.New("client sent an invalid JWT token or its claims")
@@ -54,7 +62,7 @@ func responseStatusCode(response *http.Response) error {
 	return nil
 }
 
-func Trades(pair string, from time.Time, trade func(id uint64, tme, nte time.Time, price, volume float64, buy bool)) time.Time {
+func trades(pair string, from time.Time, trade func(id uint64, timestamp time.Time, price, volume float64, buy bool)) time.Time {
 
 	var data struct {
 		Result any `json:"result"`
@@ -99,7 +107,7 @@ func Trades(pair string, from time.Time, trade func(id uint64, tme, nte time.Tim
 	// Trades.
 	tds := rst[strings.ToUpper(pair)].([]any)
 
-	for i := 0; i < len(tds)-1; i++ {
+	for i := 0; i < len(tds); i++ {
 
 		t := tds[i].([]any)
 
@@ -111,24 +119,14 @@ func Trades(pair string, from time.Time, trade func(id uint64, tme, nte time.Tim
 		vle, err := strconv.ParseFloat(t[1].(string), 64)
 		xlog.Fatalln(err)
 
-		// Parse time.
+		// Parse timestamp.
 		tsp, err := json.Marshal(t[2])
 		xlog.Fatalln(err)
 
-		csc, err := strconv.ParseInt(string(tsp[:10]), 10, 64)
+		tss, err := strconv.ParseInt(string(tsp[:10]), 10, 64)
 		xlog.Fatalln(err)
 
-		cnc, err := strconv.ParseInt(string(tsp[11:]), 10, 64)
-		xlog.Fatalln(err)
-
-		// Parse next time.
-		nts, err := json.Marshal(tds[i+1].([]any)[2])
-		xlog.Fatalln(err)
-
-		nsc, err := strconv.ParseInt(string(nts[:10]), 10, 64)
-		xlog.Fatalln(err)
-
-		nns, err := strconv.ParseInt(string(nts[11:]), 10, 64)
+		tsn, err := strconv.ParseInt(string(tsp[11:]), 10, 64)
 		xlog.Fatalln(err)
 
 		// Parse buy/sell.
@@ -137,7 +135,7 @@ func Trades(pair string, from time.Time, trade func(id uint64, tme, nte time.Tim
 		// Parse trade id.
 		id := uint64(t[6].(float64))
 
-		trade(id, time.Unix(csc, cnc).UTC(), time.Unix(nsc, nns).UTC(), pce, vle, buy)
+		trade(id, time.Unix(tss, tsn).UTC(), pce, vle, buy)
 	}
 
 	from = time.Unix(0, lst).UTC()
@@ -146,8 +144,38 @@ func Trades(pair string, from time.Time, trade func(id uint64, tme, nte time.Tim
 
 		time.Sleep(time.Second)
 
-		Trades(pair, from, trade)
+		trades(pair, from, trade)
+
 	}
 
 	return from
+}
+
+func Trades(pair string, from time.Time, interval time.Duration, cluster func(trades ...Trade)) {
+
+	// Prev timestamp.
+	ptp := time.Time{}
+
+	// Trades
+	tds := make([]Trade, 0)
+
+	trades(pair, from, func(id uint64, timestamp time.Time, price, volume float64, buy bool) {
+
+		if ptp.Before(timestamp.Truncate(interval)) {
+
+			cluster(tds...)
+
+			tds = tds[:0]
+		}
+
+		tds = append(tds, Trade{
+			Id:       id,
+			Price:    price,
+			Quantity: volume,
+			Time:     timestamp,
+			Buy:      buy,
+		})
+
+		ptp = timestamp.Truncate(interval)
+	})
 }
